@@ -232,19 +232,19 @@ impl CallLlmRequest {
 #[derive(Clone)]
 pub struct Driver {
     driver: TypeErasedDriver,
-    /// Name of the algorithm this driver serves — the `algorithm` attribute on
-    /// the telemetry emitted for its calls and decisions.
-    algorithm: Arc<str>,
+    /// The request's [`Context`] — carries the algorithm label stamped onto the
+    /// telemetry emitted for this driver's calls and decisions.
+    ctx: Context,
 }
 
 impl Driver {
-    /// Build an empty driver with its step channel ready, labeled with the name
-    /// of the algorithm it serves. Created per call by
+    /// Build an empty driver with its step channel ready, carrying the
+    /// request's [`Context`]. Created per call by
     /// [`run_stream`](Algorithm::run_stream).
-    pub(crate) fn new(algorithm: &str) -> Self {
+    pub(crate) fn new(ctx: Context) -> Self {
         Self {
             driver: TypeErasedDriver::new(),
-            algorithm: Arc::from(algorithm),
+            ctx,
         }
     }
 
@@ -254,7 +254,7 @@ impl Driver {
     /// outcome, and token usage are recorded when it resolves.
     pub async fn call_llm(&self, routed: RoutedRequest) -> Result<Response, BoxErr> {
         let selected_model = routed.decision.selected_model().to_string();
-        let span = observability::llm_call_span(&self.algorithm, &selected_model);
+        let span = observability::llm_call_span(self.ctx.algorithm(), &selected_model);
         async {
             let started = Instant::now();
             let result = self
@@ -262,7 +262,7 @@ impl Driver {
                 .fulfill_request::<RoutedRequest, Response>(routed)
                 .await;
             observability::record_llm_call(
-                &self.algorithm,
+                self.ctx.algorithm(),
                 &selected_model,
                 started.elapsed(),
                 &result,
@@ -298,7 +298,7 @@ impl Driver {
     /// reasoning; a decision the stream never accepted is not recorded.
     pub async fn info(&self, decision: Arc<dyn Decision>) -> Result<(), BoxErr> {
         self.driver.info(decision.clone()).await?;
-        observability::record_decision(&self.algorithm, decision.as_ref());
+        observability::record_decision(self.ctx.algorithm(), decision.as_ref());
         Ok(())
     }
 
@@ -330,16 +330,33 @@ impl Driver {
     }
 }
 
-/// Per-request state threaded to an algorithm alongside its [`Driver`]. A placeholder
-/// for cross-cutting state (correlation ids, budgets, deadlines) an algorithm will
-/// read; empty today. It does not carry the offload driver, so it is safe to share.
+/// Per-request state threaded to an algorithm alongside its [`Driver`]. Carries
+/// cross-cutting request state — today the serving algorithm's telemetry label,
+/// stamped by [`Algorithm::run_stream`]; correlation ids, budgets, and deadlines
+/// join it the same way. It does not carry the offload driver, so it is safe to share.
 #[derive(Clone, Default)]
-pub struct Context {}
+pub struct Context {
+    /// Name of the algorithm serving this request (see [`Algorithm::name`]).
+    algorithm: Option<Arc<str>>,
+}
 
 impl Context {
     /// Build an empty context.
     pub fn new() -> Self {
-        Self {}
+        Self::default()
+    }
+
+    /// The serving algorithm's telemetry label — the `algorithm` attribute on
+    /// libsy spans, metrics, and logs. Empty until
+    /// [`run_stream`](Algorithm::run_stream) stamps it.
+    pub fn algorithm(&self) -> &str {
+        self.algorithm.as_deref().unwrap_or("")
+    }
+
+    /// Returns the context with the algorithm label set.
+    pub(crate) fn with_algorithm(mut self, algorithm: &str) -> Self {
+        self.algorithm = Some(Arc::from(algorithm));
+        self
     }
 }
 
@@ -432,7 +449,8 @@ pub trait Algorithm: Send + Sync + 'static {
     /// Run one request to completion: make model calls with [`Driver::call_llm_target`],
     /// publish [`Decision`]s with [`Driver::info`], and return the final [`Response`].
     /// The method an algorithm implements; [`run`](Self::run) / [`run_stream`](Self::run_stream)
-    /// drive it. `ctx` carries cross-cutting request state (empty today).
+    /// drive it. `ctx` carries cross-cutting request state (today: the
+    /// algorithm's telemetry label).
     async fn create_run_task(
         self: Arc<Self>,
         ctx: Context,
@@ -455,10 +473,13 @@ pub trait Algorithm: Send + Sync + 'static {
     /// bounded, so pulling paces the algorithm; each call is independent, so many run
     /// concurrently.
     fn run_stream(self: Arc<Self>, ctx: Context, request: Request) -> StepStream {
+        // Stamp the algorithm's telemetry label onto this request's context; the
+        // driver carries the context so its calls and decisions are attributed.
+        let ctx = ctx.with_algorithm(self.name());
         // This call's own driver: take its consumer stream, hand a producer-side clone to
         // the algorithm task, and keep one to emit the terminal step. The task blocks
         // publishing a step until the consumer pulls the previous one.
-        let driver = Driver::new(self.name());
+        let driver = Driver::new(ctx.clone());
         let stream = driver.stream();
         // One `libsy.run` span covers the whole algorithm task; the driver's
         // `libsy.llm_call` spans and decision logs nest inside it via `tracing`'s
@@ -469,7 +490,7 @@ pub trait Algorithm: Send + Sync + 'static {
                 let started = Instant::now();
                 let outcome = self.create_run_task(ctx, driver.clone(), request).await;
                 observability::record_run(
-                    &driver.algorithm,
+                    driver.ctx.algorithm(),
                     started.elapsed(),
                     &outcome,
                     &tracing::Span::current(),

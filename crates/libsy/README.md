@@ -251,5 +251,5 @@ tested — `cargo test -p libsy-examples`).
 ## Not yet built
 
 - **`Signals` events** — `process_signals` / `Signals` exist but carry nothing yet.
-- **`Context` fields** — the per-request state carrier is an empty placeholder today.
+- **`Context` fields** — carries the algorithm telemetry label today; correlation ids, budgets, and deadlines still to come.
 - **Config-driven construction**, **typed errors** (vs `Box<dyn Error>`), **weighted random**.
