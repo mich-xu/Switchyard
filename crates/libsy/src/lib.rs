@@ -57,7 +57,9 @@
 //! The provided run methods instrument every algorithm from the outside — at the
 //! [`Decision`] hook and the offload boundary — so algorithms carry no telemetry
 //! code. Each run gets a `libsy.run` tracing span (correlation ids from
-//! [`Metadata`] attached) with a child `libsy.llm_call` span per model call;
+//! [`Metadata`] attached) with a child `libsy.llm_call` span per model call
+//! (fulfillment time as the algorithm observes it) plus a `libsy.client_call`
+//! span around the actual API call when [`run`](Algorithm::run) serves it;
 //! each [`Driver::info`] decision is logged with its reasoning; and OpenTelemetry
 //! metrics record run/call counts, latency, token usage, and published
 //! decisions, keyed by [`Algorithm::name`] plus `selected_model` and `outcome`.
@@ -250,8 +252,10 @@ impl Driver {
 
     /// Offload a model call: publish `routed` as a [`Step::CallLlm`] and await the
     /// consumer's [`Response`]. Errors if the stream is closed or the call failed.
-    /// The await is wrapped in a `libsy.llm_call` span, and the call's latency,
-    /// outcome, and token usage are recorded when it resolves.
+    /// The await is wrapped in a `libsy.llm_call` span measuring *fulfillment* as
+    /// the algorithm observes it (host queueing/serving included); latency,
+    /// outcome, and token usage are recorded when it resolves. The provider call
+    /// itself gets a `libsy.client_call` span when [`Algorithm::run`] serves it.
     pub async fn call_llm(&self, routed: RoutedRequest) -> Result<Response, BoxErr> {
         let selected_model = routed.decision.selected_model().to_string();
         observability::observe_llm_call(
@@ -515,9 +519,12 @@ pub trait Algorithm: Send + Sync + 'static {
                     routed.decision.selected_model()
                 )
             })?;
-            call.respond(client.call(routed).await)
+            let result = client.call(routed).await;
+            observability::record_client_call(&result);
+            call.respond(result)
         }
 
+        let algorithm = self.name().to_string();
         let stream = self.run_stream(ctx, request);
         tokio::pin!(stream);
 
@@ -535,7 +542,15 @@ pub trait Algorithm: Send + Sync + 'static {
                     match step {
                         None => stream_open = false,
                         Some(item) => match item? {
-                            Step::CallLlm(call) => in_flight.push(serve(call)),
+                            Step::CallLlm(call) => {
+                                // `serve` makes the one API call libsy itself
+                                // performs; give it its own client-call span.
+                                let span = observability::client_call_span(
+                                    &algorithm,
+                                    call.get_decision().selected_model(),
+                                );
+                                in_flight.push(serve(call).instrument(span));
+                            }
                             Step::Decision(decision) => trace.push(decision),
                             Step::ReturnToAgent(response) => {
                                 final_response = Some(*response);
