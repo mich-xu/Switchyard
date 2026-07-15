@@ -175,6 +175,8 @@ Example — the LLM classifier (classify, then route; full version in
 ```rust
 #[async_trait]
 impl Algorithm for LlmClassifierOrchAlgo {
+    fn name(&self) -> &str { "llm_classifier" }
+
     async fn create_run_task(self: Arc<Self>, _ctx: Context, driver: Driver, request: Request)
         -> Result<Response, Box<dyn Error + Send + Sync>> {
         // 1. Classify: ask the classifier target for a score.
