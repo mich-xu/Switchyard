@@ -53,6 +53,10 @@ impl RandomOrchAlgo {
 
 #[async_trait]
 impl Algorithm for RandomOrchAlgo {
+    fn name(&self) -> &str {
+        "random"
+    }
+
     async fn create_run_task(
         self: Arc<Self>,
         _ctx: Context,

@@ -16,8 +16,15 @@ async-trait = "0.1"
 serde_json = "1"
 futures = "0.3"
 libsy-protocol = { path = "../libsy-protocol" }
+# Metrics-only OTel API: instruments record through the host-installed global
+# meter provider. Pinned to the 0.32 line used across the workspace.
+opentelemetry = { version = "0.32", default-features = false, features = ["metrics"] }
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
+tracing = { version = "0.1", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+# SDK + in-memory exporter to assert what the observability layer records.
+opentelemetry_sdk = { version = "0.32", features = ["metrics", "testing"] }
 tokio = { version = "1", features = ["macros", "rt"] }
+tracing-subscriber = "0.3"

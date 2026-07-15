@@ -100,6 +100,10 @@ impl LlmClassifierOrchAlgo {
 
 #[async_trait]
 impl Algorithm for LlmClassifierOrchAlgo {
+    fn name(&self) -> &str {
+        "llm_classifier"
+    }
+
     async fn create_run_task(
         self: Arc<Self>,
         _ctx: Context,

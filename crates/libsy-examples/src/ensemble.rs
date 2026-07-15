@@ -396,6 +396,10 @@ fn parse_choice(completion: &str, count: usize) -> usize {
 
 #[async_trait]
 impl Algorithm for EnsembleOrchAlgo {
+    fn name(&self) -> &str {
+        "ensemble"
+    }
+
     async fn create_run_task(
         self: Arc<Self>,
         _ctx: Context,
