@@ -211,7 +211,8 @@ boundary — so algorithms carry no telemetry code beyond `Algorithm::name()`, t
 `algorithm` attribute everything below is keyed by.
 
 - **Spans** (`tracing`): one `libsy.run` per request, carrying the `Metadata`
-  correlation ids and the outcome, with one child `libsy.llm_call` per model call
+  correlation ids, any host-defined `extra_metadata` labels, and the outcome,
+  with one child `libsy.llm_call` per model call
   (selected model, outcome, token counts; measures *fulfillment* as the algorithm
   observes it, host serving included). When `run` serves a call via the target's
   default client, the actual API call gets its own `libsy.client_call` span —
