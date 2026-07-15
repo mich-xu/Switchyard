@@ -10,6 +10,7 @@ from typing import Any, cast
 
 import pytest
 
+from switchyard.lib.processors.intake_payload_builder import CTX_SUBMODEL_CALLS
 from switchyard.lib.processors.llm_classifier import (
     CTX_DETERMINISTIC_ROUTE_SIGNALS,
     ClassifierCompletion,
@@ -123,6 +124,47 @@ async def test_request_processor_stamps_classifier_signals() -> None:
     assert fake.calls[0]["model"] == "router-model"
     assert '"request_type": "openai_chat"' in fake.calls[0]["request_summary"]
     assert "debug this traceback" in fake.calls[0]["request_summary"]
+
+
+async def test_request_processor_stashes_submodel_call_on_success() -> None:
+    """Success stashes the classifier's usage for the intake sink to emit."""
+    fake = _FakeClassifierClient(
+        _signals_json(),
+        usage=_FakeUsage(prompt_tokens=420, completion_tokens=80, cached_tokens=10),
+    )
+    processor = LLMClassifierRequestProcessor(
+        LLMClassifierConfig(model="router-classifier"),
+        client=fake,
+    )
+    ctx = ProxyContext()
+
+    await processor.process(ctx, _request())
+
+    calls = ctx.metadata[CTX_SUBMODEL_CALLS]
+    assert calls == [
+        {
+            "model": "router-classifier",
+            "prompt_tokens": 420,
+            "completion_tokens": 80,
+            "cached_tokens": 10,
+            "router_type": "deterministic",
+            "routed_to": "classifier",
+        }
+    ]
+
+
+async def test_request_processor_stashes_no_submodel_call_on_fail_open() -> None:
+    """Fail-open (classifier errored) has no usage, so nothing is stashed."""
+    fake = _FakeClassifierClient(RuntimeError("upstream down"))
+    processor = LLMClassifierRequestProcessor(
+        LLMClassifierConfig(model="router-classifier", fail_open=True),
+        client=fake,
+    )
+    ctx = ProxyContext()
+
+    await processor.process(ctx, _request())
+
+    assert CTX_SUBMODEL_CALLS not in ctx.metadata
 
 
 async def test_classifier_skips_llm_call_when_session_pinned() -> None:

@@ -54,6 +54,9 @@ from switchyard.lib.processors.routellm_request_processor import (
     CTX_ROUTELLM_TIER,
     RouteLLMRequestProcessor,
 )
+from switchyard.lib.processors.submodel_intake_response_processor import (
+    SubModelIntakeResponseProcessor,
+)
 from switchyard.lib.profiles import (
     ClassifierConfig,
     ContextAwareProfile,
@@ -211,6 +214,7 @@ __all__ = [
     "IntakeRequestProcessor",
     "IntakeResponseProcessor",
     "IntakeSinkConfig",
+    "SubModelIntakeResponseProcessor",
     "RlLoggingRequestProcessor",
     "RlLoggingResponseProcessor",
     # OSS Router (external-process plugin)

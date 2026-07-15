@@ -148,9 +148,15 @@ def build_intake_processors(
 
     from switchyard.lib.processors.intake_request_processor import IntakeRequestProcessor
     from switchyard.lib.processors.intake_response_processor import IntakeResponseProcessor
+    from switchyard.lib.processors.submodel_intake_response_processor import (
+        SubModelIntakeResponseProcessor,
+    )
 
     config = intake.to_sink_config()
-    return [IntakeRequestProcessor()], [IntakeResponseProcessor(config)]
+    return (
+        [IntakeRequestProcessor()],
+        [IntakeResponseProcessor(config), SubModelIntakeResponseProcessor(config)],
+    )
 
 
 def build_launch_capture_processors(

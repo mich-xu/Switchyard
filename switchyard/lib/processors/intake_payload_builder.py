@@ -40,6 +40,10 @@ INTAKE_SESSION_ID_KEY = "_intake_session_id"
 INTAKE_INBOUND_FORMAT_KEY = "_intake_inbound_format"
 INTAKE_REQUEST_SNAPSHOT_KEY = "_intake_request_snapshot"
 INTAKE_SKIP_KEY = "_intake_skip"
+#: Context key holding a list of routing-strategy sub-model calls (model +
+#: token usage) so the intake sink can emit each as its own record. A list,
+#: not a single value, so multiple sub-calls in one chain accumulate.
+CTX_SUBMODEL_CALLS = "_submodel_calls"
 SYNTHETIC_STREAM_RESPONSE_IDS = frozenset(
     {
         "chatcmpl-intake-stream",

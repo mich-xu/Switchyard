@@ -11,6 +11,7 @@ from typing import Any, cast
 
 import pytest
 
+from switchyard.lib.processors.intake_payload_builder import CTX_SUBMODEL_CALLS
 from switchyard.lib.processors.plan_execute import (
     CTX_PLANNER_DECISION,
     PlannerCompletion,
@@ -381,3 +382,51 @@ async def test_planning_processor_prefills_responses_input_string() -> None:
     assert isinstance(input_value, list)
     assert input_value[0] == {"role": "user", "content": "refactor auth middleware"}
     assert input_value[-1] == {"role": "assistant", "content": _WRAPPED_PLAN}
+
+
+class _UsagePlannerClient:
+    """Planner double that returns a token-usage block, so the producer has
+    counts to stash for the intake sink."""
+
+    def __init__(self, content: str, usage: object) -> None:
+        self.content = content
+        self.usage = usage
+
+    async def plan(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        request_summary: str,
+    ) -> PlannerCompletion:
+        return PlannerCompletion(content=self.content, usage=self.usage)
+
+
+async def test_process_stashes_planner_submodel_call_for_intake() -> None:
+    """A successful planner call is stashed for the intake sink to emit."""
+    fake = _UsagePlannerClient(
+        _decision_with_plan_json(),
+        SimpleNamespace(
+            prompt_tokens=512,
+            completion_tokens=64,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=8),
+        ),
+    )
+    processor = PlanningRequestProcessor(
+        PlanningConfig(model="planner-model", cadence_n=1),
+        client=fake,
+    )
+    ctx = ProxyContext()
+
+    await processor.process(ctx, _openai_request_first_turn())
+
+    assert ctx.metadata[CTX_SUBMODEL_CALLS] == [
+        {
+            "model": "planner-model",
+            "prompt_tokens": 512,
+            "completion_tokens": 64,
+            "cached_tokens": 8,
+            "router_type": "plan_execute",
+            "routed_to": "planner",
+        }
+    ]

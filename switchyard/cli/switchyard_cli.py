@@ -93,6 +93,9 @@ from switchyard.lib.config import IntakeSinkConfig
 from switchyard.lib.processors.intake_request_processor import IntakeRequestProcessor
 from switchyard.lib.processors.intake_response_processor import IntakeResponseProcessor
 from switchyard.lib.processors.rl_logging_response_processor import build_rl_logging_processors
+from switchyard.lib.processors.submodel_intake_response_processor import (
+    SubModelIntakeResponseProcessor,
+)
 from switchyard.server.server_util import (
     DEFAULT_SECRETS_FILE,
     add_transport_args,
@@ -233,7 +236,10 @@ def _resolve_intake_processors(
     intake = _resolve_intake_config(args)
     if intake is None:
         return [], []
-    return [IntakeRequestProcessor()], [IntakeResponseProcessor(intake)]
+    return (
+        [IntakeRequestProcessor()],
+        [IntakeResponseProcessor(intake), SubModelIntakeResponseProcessor(intake)],
+    )
 
 
 def _add_intake_args(parser: argparse.ArgumentParser) -> None:

@@ -33,6 +33,7 @@ __all__ = [
     "StatsRequestProcessor",
     "StatsResponseProcessor",
     "StatsResponseProcessorLiveCollector",
+    "SubModelIntakeResponseProcessor",
 ]
 
 
@@ -56,4 +57,9 @@ def __getattr__(name: str) -> Any:
             IntakeResponseProcessor,
         )
         return IntakeResponseProcessor
+    elif name == "SubModelIntakeResponseProcessor":
+        from switchyard.lib.processors.submodel_intake_response_processor import (
+            SubModelIntakeResponseProcessor,
+        )
+        return SubModelIntakeResponseProcessor
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

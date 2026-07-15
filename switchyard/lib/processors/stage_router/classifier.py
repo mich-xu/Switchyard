@@ -12,6 +12,7 @@ from importlib.resources import files
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from switchyard.lib.llm_client import OpenAILLMClient
+from switchyard.lib.processors.intake_payload_builder import CTX_SUBMODEL_CALLS
 
 if TYPE_CHECKING:
     from switchyard.lib.proxy_context import ProxyContext
@@ -230,20 +231,45 @@ class TierClassifier:
                     pass
             return None
         latency_ms = (time.perf_counter() - started_at) * 1000.0
+        prompt_tokens, completion_tokens, cached_tokens = _tier_token_counts(
+            getattr(response, "usage", None),
+        )
+        # Stash usage so the intake sink emits the tier-classifier call as its
+        # own NVDataflow record; the routed-turn record never sees it.
+        if hasattr(ctx, "metadata"):
+            ctx.metadata.setdefault(CTX_SUBMODEL_CALLS, []).append(
+                {
+                    "model": self._model,
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "cached_tokens": cached_tokens,
+                    "router_type": "stage_router",
+                    "routed_to": "tier_classifier",
+                }
+            )
         if self._stats is not None:
             try:
-                usage = getattr(response, "usage", None)
-                details = getattr(usage, "prompt_tokens_details", None)
                 await self._stats.record_classifier_usage(
                     self._model,
-                    prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
-                    completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
-                    cached_tokens=getattr(details, "cached_tokens", None) or 0,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    cached_tokens=cached_tokens,
                     latency_ms=latency_ms,
                 )
             except Exception:
                 pass
         return _parse_tier(response)
+
+
+def _tier_token_counts(usage: Any) -> tuple[int, int, int]:
+    """Return ``(prompt, completion, cached)`` tokens from an SDK usage object."""
+    if usage is None:
+        return 0, 0, 0
+    prompt = getattr(usage, "prompt_tokens", 0) or 0
+    completion = getattr(usage, "completion_tokens", 0) or 0
+    details = getattr(usage, "prompt_tokens_details", None)
+    cached = (getattr(details, "cached_tokens", 0) or 0) if details is not None else 0
+    return prompt, completion, cached
 
 
 __all__ = ["CAPABLE_TIER", "TierClassifier", "EFFICIENT_TIER"]
