@@ -26,13 +26,14 @@
 //! provider installed at any point in the process lifetime; the cost is
 //! negligible next to a model call.
 
-use std::time::Duration;
+use std::future::Future;
+use std::time::{Duration, Instant};
 
 use opentelemetry::metrics::Meter;
 use opentelemetry::{global, KeyValue};
-use tracing::Span;
+use tracing::{Instrument, Span};
 
-use crate::{BoxErr, Decision, Metadata, Response};
+use crate::{BoxErr, Context, Decision, Metadata, Response};
 
 /// Instrumentation scope for every libsy meter, span, and log line.
 const SCOPE: &str = "libsy";
@@ -83,10 +84,53 @@ pub(crate) fn run_span(algorithm: &str, metadata: Option<&Metadata>) -> Span {
     span
 }
 
+/// Runs one algorithm task to completion, recording the run counter, duration
+/// histogram, span outcome, and failure log when it resolves. Executes inside
+/// the `libsy.run` span its caller instruments the task with.
+pub(crate) async fn observe_run(
+    ctx: Context,
+    run: impl Future<Output = Result<Response, BoxErr>>,
+) -> Result<Response, BoxErr> {
+    let started = Instant::now();
+    let result = run.await;
+    record_run(
+        ctx.algorithm(),
+        started.elapsed(),
+        &result,
+        &Span::current(),
+    );
+    result
+}
+
+/// Drives one offloaded model call inside its own `libsy.llm_call` span,
+/// recording the call counter, latency histogram, token usage, span fields,
+/// and failure log when the call resolves.
+pub(crate) async fn observe_llm_call(
+    ctx: &Context,
+    selected_model: &str,
+    call: impl Future<Output = Result<Response, BoxErr>>,
+) -> Result<Response, BoxErr> {
+    let span = llm_call_span(ctx.algorithm(), selected_model);
+    async {
+        let started = Instant::now();
+        let result = call.await;
+        record_llm_call(
+            ctx.algorithm(),
+            selected_model,
+            started.elapsed(),
+            &result,
+            &Span::current(),
+        );
+        result
+    }
+    .instrument(span)
+    .await
+}
+
 /// Span covering one offloaded model call, a child of the surrounding
 /// `libsy.run` span. `outcome`, `error`, and the token-count fields are filled
 /// in by [`record_llm_call`] when the call resolves.
-pub(crate) fn llm_call_span(algorithm: &str, selected_model: &str) -> Span {
+fn llm_call_span(algorithm: &str, selected_model: &str) -> Span {
     tracing::info_span!(
         target: SCOPE,
         "libsy.llm_call",
@@ -104,12 +148,7 @@ pub(crate) fn llm_call_span(algorithm: &str, selected_model: &str) -> Span {
 /// Records the end of one algorithm run: the run counter and duration
 /// histogram, the `outcome`/`error` fields on `span`, and a warn log when the
 /// run failed.
-pub(crate) fn record_run(
-    algorithm: &str,
-    duration: Duration,
-    result: &Result<Response, BoxErr>,
-    span: &Span,
-) {
+fn record_run(algorithm: &str, duration: Duration, result: &Result<Response, BoxErr>, span: &Span) {
     let outcome = outcome_value(result);
     span.record("outcome", outcome);
     if let Err(error) = result {
@@ -133,7 +172,7 @@ pub(crate) fn record_run(
 /// latency histogram, token counters from the response usage (absent fields are
 /// skipped, not recorded as zero), the `outcome`/`error`/token fields on
 /// `span`, and a warn log when the call failed.
-pub(crate) fn record_llm_call(
+fn record_llm_call(
     algorithm: &str,
     selected_model: &str,
     duration: Duration,

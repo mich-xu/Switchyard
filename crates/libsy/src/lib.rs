@@ -74,7 +74,7 @@
 mod driver;
 mod observability;
 
-use std::{error::Error, pin::Pin, sync::Arc, time::Instant};
+use std::{error::Error, pin::Pin, sync::Arc};
 
 use async_trait::async_trait;
 use futures::{Stream, StreamExt};
@@ -254,23 +254,12 @@ impl Driver {
     /// outcome, and token usage are recorded when it resolves.
     pub async fn call_llm(&self, routed: RoutedRequest) -> Result<Response, BoxErr> {
         let selected_model = routed.decision.selected_model().to_string();
-        let span = observability::llm_call_span(self.ctx.algorithm(), &selected_model);
-        async {
-            let started = Instant::now();
-            let result = self
-                .driver
-                .fulfill_request::<RoutedRequest, Response>(routed)
-                .await;
-            observability::record_llm_call(
-                self.ctx.algorithm(),
-                &selected_model,
-                started.elapsed(),
-                &result,
-                &tracing::Span::current(),
-            );
-            result
-        }
-        .instrument(span)
+        observability::observe_llm_call(
+            &self.ctx,
+            &selected_model,
+            self.driver
+                .fulfill_request::<RoutedRequest, Response>(routed),
+        )
         .await
     }
 
@@ -487,14 +476,11 @@ pub trait Algorithm: Send + Sync + 'static {
         let span = observability::run_span(self.name(), request.metadata.as_ref());
         tokio::spawn(
             async move {
-                let started = Instant::now();
-                let outcome = self.create_run_task(ctx, driver.clone(), request).await;
-                observability::record_run(
-                    driver.ctx.algorithm(),
-                    started.elapsed(),
-                    &outcome,
-                    &tracing::Span::current(),
-                );
+                let outcome = observability::observe_run(
+                    driver.ctx.clone(),
+                    self.create_run_task(ctx, driver.clone(), request),
+                )
+                .await;
                 let _ = driver.finish(outcome).await;
             }
             .instrument(span),
