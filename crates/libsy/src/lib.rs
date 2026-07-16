@@ -113,6 +113,7 @@ pub struct Request {
 }
 
 impl Request {
+    /// The name of the model requested
     pub fn model(&self) -> Option<&str> {
         self.llm_request.model.as_deref()
     }
@@ -137,6 +138,7 @@ pub struct Response {
 }
 
 impl Response {
+    /// The name of the model used
     pub fn model(&self) -> Option<&str> {
         self.llm_response.model.as_deref()
     }
