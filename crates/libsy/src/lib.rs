@@ -57,6 +57,9 @@
 //! Worked implementations — a random router, an LLM classifier, and a stateful
 //! ensemble — plus runnable agents live in the `libsy-examples` crate.
 
+mod algorithms;
+pub use algorithms::noop::{NoopAlgo, NoopDecision};
+
 mod driver;
 
 use std::{error::Error, pin::Pin, sync::Arc};
@@ -109,6 +112,12 @@ pub struct Request {
     pub metadata: Option<Metadata>,
 }
 
+impl Request {
+    pub fn model(&self) -> Option<&str> {
+        self.llm_request.model.as_deref()
+    }
+}
+
 /// Agentic-stack events fed to an algorithm out of band via
 /// [`Algorithm::process_signals`] (e.g. tool results, budget updates).
 ///
@@ -125,6 +134,12 @@ pub struct Response {
     pub llm_response: LlmResponse,
     /// Correlation metadata carried through the response.
     pub metadata: Option<Metadata>,
+}
+
+impl Response {
+    pub fn model(&self) -> Option<&str> {
+        self.llm_response.model.as_deref()
+    }
 }
 
 /// A decision/trace object produced by an algorithm.
