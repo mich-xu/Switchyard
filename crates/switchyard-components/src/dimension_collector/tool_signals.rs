@@ -182,9 +182,12 @@ pub const DEFAULT_RECENT_WINDOW: usize = 3;
 /// via [`crate::get_tool_result_signal`].
 #[derive(Clone, Debug, Default)]
 pub struct ToolResultSignal {
+    /// Max severity across the recent window (last `recent_window` tool results):
     /// `0.0` clean · `0.3` soft (exit_nonzero) · `0.7` hard · `1.0` critical.
+    /// Windowed so an error persists through the recovery turns instead of clearing
+    /// the instant the next result is clean.
     pub severity: f32,
-    /// Error pattern names that fired in the most recent tool result.
+    /// Error pattern names from the highest-severity result in the recent window.
     pub patterns: Vec<String>,
     /// Consecutive clean tool results back from the most recent. `0` if the last failed.
     pub no_error_streak: u32,
@@ -523,11 +526,22 @@ fn build_signal(
     prompt_char_count: u32,
     recent_window: usize,
 ) -> ToolResultSignal {
-    let (severity, patterns) = if let Some(last) = tool_texts.last() {
-        classify_text(last)
-    } else {
-        (0.0, Vec::new())
-    };
+    // Windowed severity: take the MAX severity across the last `recent_window` tool
+    // results rather than only the last one. An error's severity then persists for
+    // the recent window and decays out of it — parallel to the windowed `recent_*`
+    // counts and `stuck_exploring` — so a fix written a couple of turns after an error
+    // still routes on the error signal instead of the router flapping straight back to
+    // the weak tier. `patterns` carries the labels of the highest-severity result.
+    let sev_start = tool_texts.len().saturating_sub(recent_window.max(1));
+    let mut severity = 0.0f32;
+    let mut patterns: Vec<String> = Vec::new();
+    for text in &tool_texts[sev_start..] {
+        let (sev, pats) = classify_text(text);
+        if sev > severity {
+            severity = sev;
+            patterns = pats;
+        }
+    }
 
     let no_error_streak = compute_no_error_streak(&tool_texts);
 
@@ -787,6 +801,23 @@ mod tests {
         assert!(!detect_tests_passed(&[
             "2 failed, 5 passed in 0.56s".to_string()
         ]));
+    }
+
+    #[test]
+    fn severity_is_windowed_over_recent_results() {
+        // An error two results back, then two clean results.
+        let request = ChatRequest::openai_chat(json!({
+            "messages": [
+                {"role": "tool", "tool_call_id": "1",
+                 "content": "Traceback (most recent call last):\n  ValueError"},
+                {"role": "tool", "tool_call_id": "2", "content": "ok"},
+                {"role": "tool", "tool_call_id": "3", "content": "ok"},
+            ]
+        }));
+        // window covers the error → severity persists (max over the window)
+        assert_eq!(extract_tool_signals_with_window(&request, 3).severity, HARD);
+        // window of 1 sees only the last (clean) result → severity has decayed out
+        assert_eq!(extract_tool_signals_with_window(&request, 1).severity, 0.0);
     }
 
     #[test]
